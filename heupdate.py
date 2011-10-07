@@ -10,11 +10,11 @@ from optparse import OptionParser
 import ConfigParser
 import re, string
 import subprocess
-import urlparse, httplib
+import urlparse, httplib, base64
 
 class main:
     NAME = 'HE Updater'
-    VERSION = '0.1'
+    VERSION = '0.2'
 
     def run(self):
         ''' Main entry point '''
@@ -62,15 +62,23 @@ class main:
 
         # Get last announced IP from spool
         lastip = self.__getSpoolIp()
-        self.__log.info('Last IP announced: ' + lastip)
+        self.__log.info('Last IP announced: ' + str(lastip))
 
         # Proceed?
         if self.__ip == lastip:
             self.__log.info('IP is updated. Nothing to do.')
-            sys.exit(0)
+            return 0
 
         # Update IP on server
-        self.__updateEndPoint()
+        if self.__updateEndPoint():
+            # Updates spooled IP Address
+            self.__updateSpoolIp()
+        else:
+            self.__log.info('Failure.')
+            return 1
+
+        self.__log.info('Done.')
+        return 0
 
     def __getIpIfconfig(self):
         ''' Gets current IP from ifconfig and returns it '''
@@ -105,9 +113,17 @@ class main:
         ip = f.readline().strip()
         f.close()
         return ip
+
+    def __updateSpoolIp(self):
+        ''' Updates spool file with current IP '''
+
+        spoolfile = str(self.__config.get('main', 'spool'))
+        f = open(spoolfile, 'wt')
+        f.write(self.__ip)
+        f.close()
     
     def __updateEndPoint(self):
-        ''' Updates current IPv4 endpoint from self.__ip '''
+        ''' Updates current IPv4 endpoint from self.__ip, return True on success '''
 
         url = string.Template(self.__config.get('server', 'url'))
         user = str(self.__config.get('server', 'user'))
@@ -116,6 +132,8 @@ class main:
         url = url.substitute(ip=self.__ip, tunnelid=tunnel)
         url = urlparse.urlparse(url)
 
+        headers = {'Authorization': 'Basic ' + base64.b64encode(user+':'+pwd)}
+
         self.__log.debug('Contacting ' + url.geturl())
         if url.scheme == 'http':
             server = httplib.HTTPConnection(url.netloc)
@@ -123,12 +141,26 @@ class main:
             server = httplib.HTTPSConnection(url.netloc)
         else:
             raise NotImplementedError('Unknown server URL scheme ' + url.scheme)
-        server.request('GET', url.path+'?'+url.query)
+        server.request('GET', url.path+'?'+url.query, None, headers)
 
         res = server.getresponse()
-        self.__log.debug("Got Response:\n" + unicode(res))
+        out = res.read()
+        answer = out.partition("\n")[0]
+        self.__log.debug('Got Response ' + str(res.status) + ' ' + str(res.reason) \
+            + "\n" + "\n".join(map(lambda i: ': '.join(i),res.getheaders())) + "\n" + out)
+        if res.status != 200:
+            self.__log.error('Unable to update IP: ' + str(res.status) + ' ' + str(res.reason) + '-' + answer)
+            return False
+        if answer[:63] == '-ERROR: This tunnel is already associated with this IP address.':
+            # Special case error, it's OK
+            pass
+        elif answer[0] != '+':
+            self.__log.error('Unable to update IP: ' + answer)
+            return False
+        self.__log.info(answer)
 
         server.close()
+        return True
 
 if __name__ == '__main__':
     app = main()
