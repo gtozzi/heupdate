@@ -14,7 +14,7 @@ import urlparse, httplib, base64
 
 class main:
     NAME = 'HE Updater'
-    VERSION = '0.2'
+    VERSION = '0.3'
 
     def run(self):
         ''' Main entry point '''
@@ -77,6 +77,9 @@ class main:
             self.__log.info('Failure.')
             return 1
 
+        # Run post-update commands
+        self.__runPostUpdate()
+
         self.__log.info('Done.')
         return 0
 
@@ -96,6 +99,19 @@ class main:
         if not m or not len(m.groups()):
             raise RuntimeError('Unable to get current IP from ifconfig')
         return m.group(1)
+
+    def __runPostUpdate(self):
+        ''' Runs post-update commands '''
+
+        if not self.__config.has_section('runafter'):
+            return
+        cmds = self.__config.options('runafter')
+        cmds.sort()
+
+        for c in cmds:
+            cc = self.__config.get('runafter', c).split(' ')
+            self.__log.info('Running ' + str(c) + ': ' + ' '.join(cc))
+            out = subprocess.check_output(cc)
 
     def __getSpoolIp(self):
         ''' Gets last IP announced from spool file '''
